@@ -1,0 +1,12 @@
+[package]
+name = "zearch"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+fst = "0.4.7"
+roaring = "0.10.4"
+speedy = "0.8.7"
+thiserror = "1.0.60"
