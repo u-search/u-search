@@ -1,7 +1,7 @@
 use std::io;
 
 use speedy::Readable;
-use zearch::Index;
+use zearch::{Index, Search};
 
 #[derive(Readable)]
 pub struct Names {
@@ -33,7 +33,7 @@ fn main() {
         }
 
         let now = std::time::Instant::now();
-        let ret = index.search(&input, 5);
+        let ret = index.search(Search::new(&input));
 
         println!("Found (in {:?}):", now.elapsed());
         for name in ret {
