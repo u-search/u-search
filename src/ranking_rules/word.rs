@@ -1,92 +1,163 @@
+use std::ops::ControlFlow;
+
 use roaring::{MultiOps, RoaringBitmap};
+
+use crate::WordCandidate;
 
 use super::RankingRuleImpl;
 
-pub struct Word<'a> {
-    words_candidates: Vec<&'a RoaringBitmap>,
+pub struct Word {
     first_iteration: bool,
 }
 
-impl<'a> Word<'a> {
-    pub fn new(words: &'a [RoaringBitmap]) -> Self {
-        let mut words: Vec<_> = words.iter().collect();
+impl Word {
+    pub fn new(words: &mut Vec<WordCandidate>) -> Self {
         // Since the default strategy is to pop the words from
         // the biggest frequency to the lowest we're going to
         // sort all the words by frequency in advance.
         // Later on we'll simply be able to pop the last one.
-        words.sort_unstable_by_key(|word| word.len());
+
+        // We're also going to cache the key as making the union of all typos is not that fast
+        words.sort_by_cached_key(|candidates| candidates.typos.as_slice().union().len());
 
         Self {
-            words_candidates: words,
             first_iteration: true,
         }
     }
 }
 
-impl<'a> RankingRuleImpl for Word<'a> {
-    fn next(&mut self, universe: &RoaringBitmap) -> Option<RoaringBitmap> {
+impl RankingRuleImpl for Word {
+    fn next(&mut self, words: &mut Vec<WordCandidate>) -> ControlFlow<RoaringBitmap, ()> {
         // for the first iteration we returns the intersection of every words
         if self.first_iteration {
             self.first_iteration = false;
-            // cloning here is cheap because we clone a Vec of ref
-            Some(self.words_candidates.clone().intersection() & universe)
+            // Nothing to do for the first iteration
+            ControlFlow::Continue(())
         } else {
-            self.words_candidates.pop()?;
-            if self.words_candidates.is_empty() {
-                return None;
+            let popped = words.pop();
+            println!("popped {popped:?}");
+            if words.is_empty() {
+                return ControlFlow::Break(RoaringBitmap::new());
             }
-            Some(self.words_candidates.clone().intersection() & universe)
+            ControlFlow::Continue(())
         }
+    }
+
+    fn current_results(&mut self, words: &Vec<WordCandidate>) -> RoaringBitmap {
+        words
+            .iter()
+            .map(|word| word.typos.as_slice().union())
+            .intersection()
     }
 }
 
 #[cfg(test)]
 mod test {
+    use crate::Index;
+
     use super::*;
 
     #[test]
     fn test_words_rr() {
         // let's say we're working with "le beau chien"
-        let words = vec![
-            // "le" should be present in a tons of documents
-            RoaringBitmap::from_sorted_iter(0..1000).unwrap(),
+        let mut words = vec![
+            // "le" should be present in a tons of documents and will be first to be evicted
+            WordCandidate {
+                original: String::from("le"),
+                typos: vec![RoaringBitmap::from_sorted_iter(0..1000).unwrap()],
+            },
             // "beau" is present in a bunch of documents but only 4 overlaps with "le"
-            RoaringBitmap::from_sorted_iter((0..2).chain(100..102).chain(1000..1030)).unwrap(),
-            // "chien" is present in 4 documents, and "chienne" in two other documents
-            RoaringBitmap::from_sorted_iter((1..3).chain(98..101).chain(1028..1030)).unwrap(),
+            WordCandidate {
+                original: String::from("beau"),
+                // where I shove my stuff must not matter
+                typos: vec![
+                    RoaringBitmap::from_sorted_iter(0..2).unwrap(),
+                    RoaringBitmap::from_sorted_iter(100..102).unwrap(),
+                    RoaringBitmap::from_sorted_iter(1000..1030).unwrap(),
+                ],
+            },
+            WordCandidate {
+                original: String::from("chien"),
+                typos: vec![RoaringBitmap::from_sorted_iter(
+                    (1..3).chain(98..101).chain(1028..1030),
+                )
+                .unwrap()],
+            },
         ];
-        let mut universe = words.as_slice().union();
+        let mut rr = Word::new(&mut words);
+        // after calling new, the words should be sorted from the less frequent to the most frequent one:
+        let ordering: Vec<_> = words
+            .iter()
+            .map(|word| (&word.original, word.typos.as_slice().union().len()))
+            .collect();
+        insta::assert_debug_snapshot!(ordering, @r###"
+        [
+            (
+                "chien",
+                7,
+            ),
+            (
+                "beau",
+                34,
+            ),
+            (
+                "le",
+                1000,
+            ),
+        ]
+        "###);
 
-        let mut rr = Word::new(&words);
-
-        // The first bucket should only contains the union of everything
-        let bucket = rr.next(&universe).unwrap();
+        let control = rr.next(&mut words);
+        // the ranking rule should be able to continue
+        insta::assert_debug_snapshot!(control, @r###"
+        Continue(
+            (),
+        )
+        "###);
+        // and the first bucket should only contains the union of everything
+        let bucket = rr.current_results(&words);
         insta::assert_debug_snapshot!(bucket, @"RoaringBitmap<[1, 100]>");
 
-        // we should filter our universe before doing a second call here, but just to be
+        // we should filter our candidates before doing a second call here, but just to be
         // sure it did a whole uninon between the next two words we're going to keep it
         // full. However, that should never happens in prod.
-        let bucket = rr.next(&universe).unwrap();
+        let control = rr.next(&mut words);
+        insta::assert_debug_snapshot!(control, @r###"
+        Continue(
+            (),
+        )
+        "###);
         // after running the ranking rule a second time we should have dropped the
         // less significant word: "le"
-        assert!(rr
-            .words_candidates
-            .iter()
-            .all(|b| b.len() != words[0].len()));
+        let second_bucket = rr.current_results(&words);
+        assert!(words.iter().all(|word| word.typos[0].len() != 1000));
         // The second bucket should then contains the union between "beau" and "chien"
-        insta::assert_debug_snapshot!(bucket, @"RoaringBitmap<[1, 100, 1028, 1029]>");
+        insta::assert_debug_snapshot!(second_bucket, @"RoaringBitmap<[1, 100, 1028, 1029]>");
 
         // this time we're going to do our job and filter the universe before calling next
-        universe -= bucket;
-        let bucket = rr.next(&universe).unwrap();
+        Index::cleanup(&bucket, &mut words);
+        Index::cleanup(&second_bucket, &mut words);
+        let control = rr.next(&mut words);
+        insta::assert_debug_snapshot!(control, @r###"
+        Continue(
+            (),
+        )
+        "###);
         // Then "beau" must be dropped
-        assert!(rr
-            .words_candidates
-            .iter()
-            .all(|b| b.len() != words[1].len()));
         // The third and last bucket should then contains only "chien" WITHOUT the previous returned results
-        insta::assert_debug_snapshot!(bucket, @"RoaringBitmap<[2, 98, 99]>");
+        let third_bucket = rr.current_results(&words);
+        insta::assert_debug_snapshot!(third_bucket, @"RoaringBitmap<[2, 98, 99]>");
 
-        assert!(rr.next(&universe).is_none());
+        // Even without proper cleanup, the words ranking rule shouldn't take a look at what is inside the candidates
+        // and just drop the last one + return Break([])
+        let control = rr.next(&mut words);
+        insta::assert_debug_snapshot!(control, @r###"
+        Break(
+            RoaringBitmap<[]>,
+        )
+        "###);
+        // Doing an extraneous call to current_results shouldn't crash either
+        let empty = rr.current_results(&words);
+        insta::assert_debug_snapshot!(empty, @"RoaringBitmap<[]>");
     }
 }

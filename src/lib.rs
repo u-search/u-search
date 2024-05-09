@@ -1,8 +1,11 @@
 mod ranking_rules;
 
+use std::{net::ToSocketAddrs, ops::ControlFlow, str::from_utf8};
+
 use fst::{Automaton, IntoStreamer, Map, MapBuilder, Streamer};
 use ranking_rules::{word::Word, RankingRule, RankingRuleImpl};
 use roaring::{MultiOps, RoaringBitmap};
+use text_distance::DamerauLevenshtein;
 
 pub struct Index {
     documents: Vec<String>,
@@ -57,56 +60,58 @@ impl Index {
         // contains all the buckets
         let mut res: Vec<RoaringBitmap> = Vec::new();
 
-        let candidates = self.get_candidates(&search);
-        let universe = candidates.as_slice().union();
+        let mut candidates = self.get_candidates(&search);
+        // let universe = candidates.as_slice().union();
 
         let mut ranking_rules: Vec<Box<dyn RankingRuleImpl>> = search
             .ranking_rules
             .iter()
             .map(|ranking_rule| match ranking_rule {
-                RankingRule::Word => Box::new(Word::new(&candidates)) as Box<dyn RankingRuleImpl>,
+                RankingRule::Word => {
+                    Box::new(Word::new(&mut candidates)) as Box<dyn RankingRuleImpl>
+                }
                 _ => panic!(),
                 // RankingRule::Prefix => Box::new(todo!()) as Box<dyn RankingRuleImpl>,
                 // RankingRule::Typo => Box::new(todo!()) as Box<dyn RankingRuleImpl>,
                 // RankingRule::Exact => Box::new(todo!()) as Box<dyn RankingRuleImpl>,
             })
             .collect();
+        let ranking_rules_len = ranking_rules.len();
 
         let mut current_ranking_rule = 0;
-        // store the current universe of each ranking rules
-        let mut universes = vec![universe];
 
         while res.iter().map(|bucket| bucket.len()).sum::<u64>() < search.limit as u64 {
             let ranking_rule = &mut ranking_rules[current_ranking_rule];
-            let next = ranking_rule.next(&universes[current_ranking_rule]);
+            let next = ranking_rule.next(&mut candidates);
 
-            if next.is_none() {
-                // if we're at the first ranking rule and there is nothing to sort, we don't have anything left to sort
-                if current_ranking_rule == 0 {
-                    break;
+            match next {
+                // We want to advance
+                ControlFlow::Continue(()) => {
+                    if current_ranking_rule == ranking_rules_len - 1 {
+                        // there is no ranking rule to continue, get the bucket of the current one and call it again
+                        let bucket = ranking_rule.current_results(&candidates);
+                        Self::cleanup(&bucket, &mut candidates);
+                        res.push(bucket);
+                    } else {
+                        // we advance and do nothing
+                        current_ranking_rule += 1;
+                    }
                 }
-                // else, we finished our current ranking rules and should come back one level above
-                current_ranking_rule -= 1;
-                let next = universes.pop().unwrap();
-                universes[current_ranking_rule] -= &next;
-                res.push(next);
+                // We want to get back one ranking rule behind
+                ControlFlow::Break(bucket) if bucket.is_empty() => {
+                    // if we're at the first ranking rule and there is nothing left to sort, exit
+                    if current_ranking_rule == 0 {
+                        break;
+                    }
+                    current_ranking_rule -= 1;
+                    res.push(bucket);
+                }
+                // We want to push that bucket and continue our life with the next ranking rule if there is one
+                ControlFlow::Break(bucket) => {
+                    Self::cleanup(&bucket, &mut candidates);
+                    res.push(bucket);
+                }
             }
-
-            let next = next.unwrap();
-
-            // if we generated a bucket of one element we can skip the rest of the bucket, they won't be able to sort anything
-            // or if we're already at the last ranking rule, we shouldn't advance
-            if next.len() == 1 || current_ranking_rule + 1 == ranking_rules.len() {
-                // everything that was sorted by the current ranking rule should be removed
-                // from the current one
-                universes[current_ranking_rule] -= &next;
-                res.push(next);
-                // we stay on the same ranking rule
-                continue;
-            }
-
-            universes.push(next);
-            current_ranking_rule += 1;
         }
 
         res.iter()
@@ -119,32 +124,76 @@ impl Index {
             .collect()
     }
 
-    fn get_candidates(&self, search: &Search) -> Vec<RoaringBitmap> {
+    fn cleanup(used: &RoaringBitmap, candidates: &mut [WordCandidate]) {
+        for candidate in candidates.iter_mut() {
+            for typo in candidate.typos.iter_mut() {
+                *typo -= used;
+            }
+        }
+    }
+
+    fn get_candidates(&self, search: &Search) -> Vec<WordCandidate> {
         let mut ret = Vec::with_capacity(search.words.len());
 
-        for (idx, word) in search.words.iter().enumerate() {
+        for word in search.words.iter() {
             // enable 1 typo every 3 letters maxed at 3 typos
             let typo = (word.len() / 3).min(3);
             let lev = fst::automaton::Levenshtein::new(word, typo as u32).unwrap();
 
-            let mut bitmap = RoaringBitmap::new();
-            // For the last word we enable the prefix search
-            if idx == search.words.len() - 1 {
-                let mut stream = self.fst.search(lev.starts_with()).into_stream();
-                while let Some((_matched, id)) = stream.next() {
-                    bitmap |= &self.bitmaps[id as usize];
-                }
-            } else {
-                let mut stream = self.fst.search(lev).into_stream();
-                while let Some((_matched, id)) = stream.next() {
-                    bitmap |= &self.bitmaps[id as usize];
-                }
+            let mut candidates = WordCandidate::new(word.to_string());
+
+            let mut stream = self.fst.search(lev).into_stream();
+            while let Some((matched, id)) = stream.next() {
+                candidates.insert_with_maybe_typo(
+                    std::str::from_utf8(matched).unwrap(),
+                    &self.bitmaps[id as usize],
+                );
             }
 
-            ret.push(bitmap);
+            ret.push(candidates);
         }
 
+        // TODO add one extra fake word for the prefix search
+        /*
+        let mut stream = self.fst.search(lev.starts_with()).into_stream();
+        while let Some((_matched, id)) = stream.next() {
+            bitmap |= &self.bitmaps[id as usize];
+        }
+        */
+
         ret
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct WordCandidate {
+    original: String,
+    typos: Vec<RoaringBitmap>,
+}
+
+impl WordCandidate {
+    pub fn new(original: String) -> Self {
+        Self {
+            original,
+            // we have a maximum of 3 typos
+            typos: vec![RoaringBitmap::new(); 4],
+        }
+    }
+
+    // Since the fst::Automaton doesn't tells us which automaton matched and with how many typos or prefixes
+    // we need to recompute the stuff ourselves and insert our shit in the right cell
+    pub fn insert_with_maybe_typo(&mut self, other: &str, bitmap: &RoaringBitmap) {
+        // TODO: why is this crate taking ownership of my value to do a read only operation :(
+        let distance = DamerauLevenshtein {
+            src: self.original.clone(),
+            tar: other.to_string(),
+            restricted: true,
+        }
+        .distance();
+
+        // distance shouldn't be able to go over 3 but we don't want any crash so let's ensure that
+        let distance = distance.min(3);
+        self.typos[distance] |= bitmap;
     }
 }
 
