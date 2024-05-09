@@ -52,7 +52,7 @@ impl Index {
         }
     }
 
-    pub fn search<'a>(&'a self, search: Search) -> Vec<&'a str> {
+    pub fn search<'a>(&'a self, search: &Search) -> Vec<&'a str> {
         // TODO: returns random results maybe?
         if search.words.len() == 0 {
             return Vec::new();
@@ -137,12 +137,12 @@ impl Index {
             if idx == search.words.len() - 1 {
                 let mut stream = self.fst.search(lev.starts_with()).into_stream();
                 while let Some((_matched, id)) = stream.next() {
-                    bitmap.insert(id as u32);
+                    bitmap |= &self.bitmaps[id as usize];
                 }
             } else {
                 let mut stream = self.fst.search(lev).into_stream();
                 while let Some((_matched, id)) = stream.next() {
-                    bitmap.insert(id as u32);
+                    bitmap |= &self.bitmaps[id as usize];
                 }
             }
 
@@ -219,6 +219,9 @@ impl<'a> RankingRuleImpl for Word<'a> {
             Some(self.words_candidates.clone().intersection() & universe)
         } else {
             self.words_candidates.pop()?;
+            if self.words_candidates.is_empty() {
+                return None;
+            }
             Some(self.words_candidates.clone().intersection() & universe)
         }
     }
@@ -284,5 +287,62 @@ mod test {
             .all(|b| b.len() != words[1].len()));
         // The third and last bucket should then contains only "chien" WITHOUT the previous returned results
         insta::assert_debug_snapshot!(bucket, @"RoaringBitmap<[2, 98, 99]>");
+
+        assert!(rr.next(&universe).is_none());
+    }
+
+    fn create_small_index() -> Index {
+        let names = [
+            "Tamo le plus beau",
+            "kefir le bon petit chien",
+            "kefir le beau chien",
+            "tamo est très beau aussi",
+            "le plus beau c'est kefir",
+            "mais il est un peu con",
+            "le petit kefir",
+            "kefirounet se prends pour un poney",
+            "kefirounet a un gros nez",
+            "kefir est un demi poney",
+            "le double kef",
+            "les keftas c'est bon aussi",
+        ];
+        Index::construct(names.into_iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn test_search_with_only_word() {
+        let index = create_small_index();
+        let mut search = Search::new("tamo");
+        search.ranking_rules = vec![RankingRule::Word];
+
+        insta::assert_debug_snapshot!(index.search(&search), @r###"
+        [
+            "Tamo le plus beau",
+            "tamo est très beau aussi",
+        ]
+        "###);
+
+        // "tamo est" was matched first and then tamo alone
+        let mut search = Search::new("tamo est");
+        search.ranking_rules = vec![RankingRule::Word];
+        insta::assert_debug_snapshot!(index.search(&search), @r###"
+        [
+            "tamo est très beau aussi",
+            "Tamo le plus beau",
+        ]
+        "###);
+
+        // "kefir" was removed right after we found no matches for both matches
+        // and thus no prefix search was ran and we missed kefirounet
+        let mut search = Search::new("beau kefir");
+        search.ranking_rules = vec![RankingRule::Word];
+        insta::assert_debug_snapshot!(index.search(&search), @r###"
+        [
+            "kefir le beau chien",
+            "le plus beau c'est kefir",
+            "Tamo le plus beau",
+            "tamo est très beau aussi",
+        ]
+        "###);
     }
 }

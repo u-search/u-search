@@ -33,7 +33,7 @@ fn main() {
         }
 
         let now = std::time::Instant::now();
-        let ret = index.search(Search::new(&input));
+        let ret = index.search(&Search::new(&input));
 
         println!("Found (in {:?}):", now.elapsed());
         for name in ret {
