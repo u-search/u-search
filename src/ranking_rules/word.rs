@@ -27,6 +27,10 @@ impl Word {
 }
 
 impl RankingRuleImpl for Word {
+    fn name(&self) -> &'static str {
+        "word"
+    }
+
     fn next(&mut self, words: &mut Vec<WordCandidate>) -> ControlFlow<RoaringBitmap, ()> {
         // for the first iteration we returns the intersection of every words
         if self.first_iteration {
@@ -34,8 +38,7 @@ impl RankingRuleImpl for Word {
             // Nothing to do for the first iteration
             ControlFlow::Continue(())
         } else {
-            let popped = words.pop();
-            println!("popped {popped:?}");
+            words.pop();
             if words.is_empty() {
                 return ControlFlow::Break(RoaringBitmap::new());
             }
@@ -43,7 +46,7 @@ impl RankingRuleImpl for Word {
         }
     }
 
-    fn current_results(&mut self, words: &Vec<WordCandidate>) -> RoaringBitmap {
+    fn current_results(&self, words: &Vec<WordCandidate>) -> RoaringBitmap {
         words
             .iter()
             .map(|word| word.typos.as_slice().union())
