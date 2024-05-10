@@ -90,4 +90,10 @@ impl RankingRuleImpl for Exact {
     fn current_results(&self, _words: &Vec<WordCandidate>) -> RoaringBitmap {
         self.buckets.first().cloned().unwrap_or_default()
     }
+
+    fn cleanup(&mut self, used: &RoaringBitmap) {
+        for bucket in self.buckets.iter_mut() {
+            *bucket -= used;
+        }
+    }
 }

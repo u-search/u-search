@@ -107,6 +107,7 @@ impl Index {
                         // there is no ranking rule to continue, get the bucket of the current one and call it again
                         let bucket = ranking_rule.current_results(&candidates);
                         Self::cleanup(&bucket, &mut candidates);
+                        ranking_rules.iter_mut().for_each(|rr| rr.cleanup(&bucket));
                         res.push(bucket);
                     } else {
                         // we advance and do nothing
@@ -125,6 +126,7 @@ impl Index {
                 // We want to push that bucket and continue our life with the next ranking rule if there is one
                 ControlFlow::Break(bucket) => {
                     Self::cleanup(&bucket, &mut candidates);
+                    ranking_rules.iter_mut().for_each(|rr| rr.cleanup(&bucket));
                     res.push(bucket);
                 }
             }
