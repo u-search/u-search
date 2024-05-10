@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 
 use roaring::{MultiOps, RoaringBitmap};
 
-use crate::WordCandidate;
+use crate::{Index, WordCandidate};
 
 use super::RankingRuleImpl;
 
@@ -35,6 +35,7 @@ impl RankingRuleImpl for Word {
         &mut self,
         _pred: Option<&dyn RankingRuleImpl>,
         words: &mut Vec<WordCandidate>,
+        _index: &Index,
     ) -> ControlFlow<RoaringBitmap, ()> {
         // for the first iteration we returns the intersection of every words
         if self.first_iteration {
@@ -66,16 +67,20 @@ mod test {
 
     #[test]
     fn test_words_rr() {
+        let index = Index::construct(Vec::new());
+
         // let's say we're working with "le beau chien"
         let mut words = vec![
             // "le" should be present in a tons of documents and will be first to be evicted
             WordCandidate {
                 original: String::from("le"),
+                index: 0,
                 typos: vec![RoaringBitmap::from_sorted_iter(0..1000).unwrap()],
             },
             // "beau" is present in a bunch of documents but only 4 overlaps with "le"
             WordCandidate {
                 original: String::from("beau"),
+                index: 1,
                 // where I shove my stuff must not matter
                 typos: vec![
                     RoaringBitmap::from_sorted_iter(0..2).unwrap(),
@@ -85,6 +90,7 @@ mod test {
             },
             WordCandidate {
                 original: String::from("chien"),
+                index: 2,
                 typos: vec![RoaringBitmap::from_sorted_iter(
                     (1..3).chain(98..101).chain(1028..1030),
                 )
@@ -114,7 +120,7 @@ mod test {
         ]
         "###);
 
-        let control = rr.next(&mut words);
+        let control = rr.next(None, &mut words, &index);
         // the ranking rule should be able to continue
         insta::assert_debug_snapshot!(control, @r###"
         Continue(
@@ -128,7 +134,7 @@ mod test {
         // we should filter our candidates before doing a second call here, but just to be
         // sure it did a whole uninon between the next two words we're going to keep it
         // full. However, that should never happens in prod.
-        let control = rr.next(&mut words);
+        let control = rr.next(None, &mut words, &index);
         insta::assert_debug_snapshot!(control, @r###"
         Continue(
             (),
@@ -144,7 +150,7 @@ mod test {
         // this time we're going to do our job and filter the universe before calling next
         Index::cleanup(&bucket, &mut words);
         Index::cleanup(&second_bucket, &mut words);
-        let control = rr.next(&mut words);
+        let control = rr.next(None, &mut words, &index);
         insta::assert_debug_snapshot!(control, @r###"
         Continue(
             (),
@@ -157,7 +163,7 @@ mod test {
 
         // Even without proper cleanup, the words ranking rule shouldn't take a look at what is inside the candidates
         // and just drop the last one + return Break([])
-        let control = rr.next(&mut words);
+        let control = rr.next(None, &mut words, &index);
         insta::assert_debug_snapshot!(control, @r###"
         Break(
             RoaringBitmap<[]>,

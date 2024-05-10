@@ -2,8 +2,9 @@ use std::ops::ControlFlow;
 
 use roaring::RoaringBitmap;
 
-use crate::WordCandidate;
+use crate::{Index, WordCandidate};
 
+pub mod exact;
 pub mod typo;
 pub mod word;
 
@@ -26,6 +27,7 @@ pub trait RankingRuleImpl {
         &mut self,
         prev: Option<&dyn RankingRuleImpl>,
         words: &mut Vec<WordCandidate>,
+        index: &Index,
     ) -> ControlFlow<RoaringBitmap, ()>;
 
     /// Can be called if you returned a `Continue` right before, but there is no ranking rules after you

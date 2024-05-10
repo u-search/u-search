@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 
 use roaring::{MultiOps, RoaringBitmap};
 
-use crate::WordCandidate;
+use crate::{Index, WordCandidate};
 
 use super::RankingRuleImpl;
 
@@ -35,6 +35,7 @@ impl RankingRuleImpl for Typo {
         &mut self,
         _prev: Option<&dyn RankingRuleImpl>,
         _words: &mut Vec<WordCandidate>,
+        _index: &Index,
     ) -> ControlFlow<RoaringBitmap, ()> {
         // for the first iteration we returns the intersection of every words
         if self.first_iteration {

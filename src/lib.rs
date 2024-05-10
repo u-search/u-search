@@ -7,6 +7,8 @@ use ranking_rules::{typo::Typo, word::Word, RankingRule, RankingRuleImpl};
 use roaring::RoaringBitmap;
 use text_distance::DamerauLevenshtein;
 
+use crate::ranking_rules::exact::Exact;
+
 pub struct Index {
     documents: Vec<String>,
     fst: Map<Vec<u8>>,
@@ -71,9 +73,7 @@ impl Index {
                     Box::new(Word::new(&mut candidates)) as Box<dyn RankingRuleImpl>
                 }
                 RankingRule::Typo => Box::new(Typo::new(&candidates)) as Box<dyn RankingRuleImpl>,
-                _ => panic!(),
-                // RankingRule::Prefix => Box::new(todo!()) as Box<dyn RankingRuleImpl>,
-                // RankingRule::Exact => Box::new(todo!()) as Box<dyn RankingRuleImpl>,
+                RankingRule::Exact => Box::new(Exact::new()) as Box<dyn RankingRuleImpl>,
             })
             .collect();
         let ranking_rules_len = ranking_rules.len();
@@ -90,6 +90,7 @@ impl Index {
                 current.next(
                     ranking_rules.get(current_ranking_rule - 1).map(|rr| &**rr),
                     &mut candidates,
+                    self
                 )
                 }
             };
@@ -104,18 +105,12 @@ impl Index {
                 ControlFlow::Continue(()) => {
                     if current_ranking_rule == ranking_rules_len - 1 {
                         // there is no ranking rule to continue, get the bucket of the current one and call it again
-                        // println!("there is no ranking rule to continue, get the bucket of the current one ({}) and call it again", ranking_rule.name());
                         let bucket = ranking_rule.current_results(&candidates);
                         Self::cleanup(&bucket, &mut candidates);
                         res.push(bucket);
                     } else {
                         // we advance and do nothing
                         current_ranking_rule += 1;
-                        // println!(
-                        //     "advance from {} to {}",
-                        //     ranking_rules[current_ranking_rule - 1].name(),
-                        //     ranking_rules[current_ranking_rule].name()
-                        // );
                     }
                 }
                 // We want to get back one ranking rule behind
@@ -156,12 +151,12 @@ impl Index {
     fn get_candidates(&self, search: &Search) -> Vec<WordCandidate> {
         let mut ret = Vec::with_capacity(search.words.len());
 
-        for word in search.words.iter() {
+        for (index, word) in search.words.iter().enumerate() {
             // enable 1 typo every 3 letters maxed at 3 typos
             let typo = (word.len() / 3).min(3);
             let lev = fst::automaton::Levenshtein::new(word, typo as u32).unwrap();
 
-            let mut candidates = WordCandidate::new(word.to_string());
+            let mut candidates = WordCandidate::new(word.to_string(), index);
 
             let mut stream = self.fst.search(lev).into_stream();
             while let Some((matched, id)) = stream.next() {
@@ -188,14 +183,19 @@ impl Index {
 
 #[derive(Debug)]
 pub(crate) struct WordCandidate {
+    // the original string
     original: String,
+    // its index in the phrase
+    index: usize,
+    // the number of documuents its contained in
     typos: Vec<RoaringBitmap>,
 }
 
 impl WordCandidate {
-    pub fn new(original: String) -> Self {
+    pub fn new(original: String, index: usize) -> Self {
         Self {
             original,
+            index,
             // we have a maximum of 3 typos
             typos: vec![RoaringBitmap::new(); 4],
         }
@@ -237,7 +237,7 @@ impl<'a> Search<'a> {
             input,
             limit: 10,
             words,
-            ranking_rules: vec![RankingRule::Word, RankingRule::Typo],
+            ranking_rules: vec![RankingRule::Word, RankingRule::Typo, RankingRule::Exact],
         }
     }
 }
