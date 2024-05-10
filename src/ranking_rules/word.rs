@@ -31,7 +31,11 @@ impl RankingRuleImpl for Word {
         "word"
     }
 
-    fn next(&mut self, words: &mut Vec<WordCandidate>) -> ControlFlow<RoaringBitmap, ()> {
+    fn next(
+        &mut self,
+        _pred: Option<&dyn RankingRuleImpl>,
+        words: &mut Vec<WordCandidate>,
+    ) -> ControlFlow<RoaringBitmap, ()> {
         // for the first iteration we returns the intersection of every words
         if self.first_iteration {
             self.first_iteration = false;

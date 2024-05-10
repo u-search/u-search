@@ -1,10 +1,10 @@
 mod ranking_rules;
 
-use std::{net::ToSocketAddrs, ops::ControlFlow, str::from_utf8};
+use std::ops::ControlFlow;
 
-use fst::{Automaton, IntoStreamer, Map, MapBuilder, Streamer};
-use ranking_rules::{word::Word, RankingRule, RankingRuleImpl};
-use roaring::{MultiOps, RoaringBitmap};
+use fst::{IntoStreamer, Map, MapBuilder, Streamer};
+use ranking_rules::{typo::Typo, word::Word, RankingRule, RankingRuleImpl};
+use roaring::RoaringBitmap;
 use text_distance::DamerauLevenshtein;
 
 pub struct Index {
@@ -70,9 +70,9 @@ impl Index {
                 RankingRule::Word => {
                     Box::new(Word::new(&mut candidates)) as Box<dyn RankingRuleImpl>
                 }
+                RankingRule::Typo => Box::new(Typo::new(&candidates)) as Box<dyn RankingRuleImpl>,
                 _ => panic!(),
                 // RankingRule::Prefix => Box::new(todo!()) as Box<dyn RankingRuleImpl>,
-                // RankingRule::Typo => Box::new(todo!()) as Box<dyn RankingRuleImpl>,
                 // RankingRule::Exact => Box::new(todo!()) as Box<dyn RankingRuleImpl>,
             })
             .collect();
@@ -80,21 +80,42 @@ impl Index {
 
         let mut current_ranking_rule = 0;
 
+        macro_rules! next {
+            () => {
+                {
+                // we cannot borrow twice the list of ranking rules thus we'll cheat a little
+                let current = &mut ranking_rules[current_ranking_rule];
+                // we detach the lifetime from the vec, this allow us to borrow the previous element safely
+                let current: &'static mut Box<dyn RankingRuleImpl> = unsafe { std::mem::transmute(current) };
+                current.next(
+                    ranking_rules.get(current_ranking_rule - 1).map(|rr| &**rr),
+                    &mut candidates,
+                )
+                }
+            };
+        }
+
         while res.iter().map(|bucket| bucket.len()).sum::<u64>() < search.limit as u64 {
+            let next = next!();
             let ranking_rule = &mut ranking_rules[current_ranking_rule];
-            let next = ranking_rule.next(&mut candidates);
 
             match next {
                 // We want to advance
                 ControlFlow::Continue(()) => {
                     if current_ranking_rule == ranking_rules_len - 1 {
                         // there is no ranking rule to continue, get the bucket of the current one and call it again
+                        // println!("there is no ranking rule to continue, get the bucket of the current one ({}) and call it again", ranking_rule.name());
                         let bucket = ranking_rule.current_results(&candidates);
                         Self::cleanup(&bucket, &mut candidates);
                         res.push(bucket);
                     } else {
                         // we advance and do nothing
                         current_ranking_rule += 1;
+                        // println!(
+                        //     "advance from {} to {}",
+                        //     ranking_rules[current_ranking_rule - 1].name(),
+                        //     ranking_rules[current_ranking_rule].name()
+                        // );
                     }
                 }
                 // We want to get back one ranking rule behind
@@ -216,7 +237,7 @@ impl<'a> Search<'a> {
             input,
             limit: 10,
             words,
-            ranking_rules: vec![RankingRule::Word],
+            ranking_rules: vec![RankingRule::Word, RankingRule::Typo],
         }
     }
 }

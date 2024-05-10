@@ -31,7 +31,11 @@ impl RankingRuleImpl for Typo {
         "typo"
     }
 
-    fn next(&mut self, _words: &mut Vec<WordCandidate>) -> ControlFlow<RoaringBitmap, ()> {
+    fn next(
+        &mut self,
+        _prev: Option<&dyn RankingRuleImpl>,
+        _words: &mut Vec<WordCandidate>,
+    ) -> ControlFlow<RoaringBitmap, ()> {
         // for the first iteration we returns the intersection of every words
         if self.first_iteration {
             self.first_iteration = false;
