@@ -2,7 +2,7 @@ mod ranking_rules;
 
 use std::ops::ControlFlow;
 
-use fst::{IntoStreamer, Map, MapBuilder, Streamer};
+use fst::{Automaton, IntoStreamer, Map, MapBuilder, Streamer};
 use ranking_rules::{typo::Typo, word::Word, RankingRule, RankingRuleImpl};
 use roaring::RoaringBitmap;
 use text_distance::DamerauLevenshtein;
@@ -63,7 +63,6 @@ impl Index {
         let mut res: Vec<RoaringBitmap> = Vec::new();
 
         let mut candidates = self.get_candidates(&search);
-        // let universe = candidates.as_slice().union();
 
         let mut ranking_rules: Vec<Box<dyn RankingRuleImpl>> = search
             .ranking_rules
@@ -154,18 +153,29 @@ impl Index {
         let mut ret = Vec::with_capacity(search.words.len());
 
         for (index, word) in search.words.iter().enumerate() {
+            let mut candidates = WordCandidate::new(word.to_string(), index);
+
             // enable 1 typo every 3 letters maxed at 3 typos
             let typo = (word.len() / 3).min(3);
             let lev = fst::automaton::Levenshtein::new(word, typo as u32).unwrap();
 
-            let mut candidates = WordCandidate::new(word.to_string(), index);
-
-            let mut stream = self.fst.search(lev).into_stream();
-            while let Some((matched, id)) = stream.next() {
-                candidates.insert_with_maybe_typo(
-                    std::str::from_utf8(matched).unwrap(),
-                    &self.bitmaps[id as usize],
-                );
+            // if we're at the last word we should also run a prefix search
+            if index == search.words.len() - 1 {
+                let mut stream = self.fst.search(lev.starts_with()).into_stream();
+                while let Some((matched, id)) = stream.next() {
+                    candidates.insert_with_maybe_typo(
+                        std::str::from_utf8(matched).unwrap(),
+                        &self.bitmaps[id as usize],
+                    );
+                }
+            } else {
+                let mut stream = self.fst.search(lev).into_stream();
+                while let Some((matched, id)) = stream.next() {
+                    candidates.insert_with_maybe_typo(
+                        std::str::from_utf8(matched).unwrap(),
+                        &self.bitmaps[id as usize],
+                    );
+                }
             }
 
             ret.push(candidates);
@@ -209,7 +219,8 @@ impl WordCandidate {
         // TODO: why is this crate taking ownership of my value to do a read only operation :(
         let distance = DamerauLevenshtein {
             src: self.original.clone(),
-            tar: other.to_string(),
+            // if we did a prefix query we shouldn't count the extra letters as typo
+            tar: other[0..other.len().min(self.original.len())].to_string(),
             restricted: true,
         }
         .distance();

@@ -61,7 +61,7 @@ impl RankingRuleImpl for Exact {
                             original, index, ..
                         }) if *index == id => {
                             distance += DamerauLevenshtein {
-                                src: original.to_string(),
+                                src: original[0..word.len().min(original.len())].to_string(),
                                 tar: word.to_string(),
                                 restricted: true,
                             }
