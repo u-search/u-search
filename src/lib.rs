@@ -50,12 +50,12 @@ impl<'a> Index<'a> {
 
             last_word = Some(word);
         }
-        writer.write_all(documents.len().to_be_bytes().as_slice())?;
+        writer.write_all((documents.len() as u32).to_be_bytes().as_slice())?;
         for document in documents {
             Self::write_slice(writer, document.as_ref().as_bytes())?;
         }
 
-        writer.write_all(bitmaps.len().to_be_bytes().as_slice())?;
+        writer.write_all((bitmaps.len() as u32).to_be_bytes().as_slice())?;
         for bitmap in bitmaps {
             bitmap.serialize_into(&mut *writer)?;
         }
@@ -68,25 +68,25 @@ impl<'a> Index<'a> {
     }
 
     fn write_slice(writer: &mut impl std::io::Write, slice: &[u8]) -> std::io::Result<()> {
-        writer.write_all(slice.len().to_be_bytes().as_slice())?;
+        writer.write_all((slice.len() as u32).to_be_bytes().as_slice())?;
         writer.write_all(slice)?;
         Ok(())
     }
 
-    fn read_size_from_bytes(bytes: &mut &[u8]) -> Option<usize> {
-        const USIZESIZE: usize = std::mem::size_of::<usize>();
-        let (size, b) = bytes.split_first_chunk::<USIZESIZE>()?;
+    fn read_size_from_bytes(bytes: &mut &[u8]) -> Option<u32> {
+        const U32SIZE: usize = std::mem::size_of::<u32>();
+        let (size, b) = bytes.split_first_chunk::<U32SIZE>()?;
         *bytes = b;
-        Some(usize::from_be_bytes(*size))
+        Some(u32::from_be_bytes(*size))
     }
 
     fn read_slice_from_bytes<'b>(bytes: &mut &'b [u8]) -> Option<&'b [u8]> {
         let size = Self::read_size_from_bytes(bytes)?;
-        if bytes.len() < size {
+        if bytes.len() < size as usize {
             return None;
         }
-        let ret = &bytes[..size];
-        *bytes = &bytes[size..];
+        let ret = &bytes[..size as usize];
+        *bytes = &bytes[size as usize..];
 
         Some(ret)
     }
@@ -177,7 +177,7 @@ impl<'a> Index<'a> {
                 // we detach the lifetime from the vec, this allow us to borrow the previous element safely
                 let current: &'static mut Box<dyn RankingRuleImpl> = unsafe { std::mem::transmute(current) };
                 current.next(
-                    ranking_rules.get(current_ranking_rule - 1).map(|rr| &**rr),
+                    current_ranking_rule.checked_sub(1).and_then(|prev| ranking_rules.get(prev)).map(|rr| &**rr),
                     &mut candidates,
                     self
                 )
