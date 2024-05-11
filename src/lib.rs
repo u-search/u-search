@@ -141,10 +141,7 @@ impl<'a> Index<'a> {
         Some(index.move_in_memory())
     }
 
-    // the lifetime is not tied to 'a here, if 'a was made static by shoving
-    // the Self on ram the ref would expire when the struct is dropped.
-    // Here the lifetime is tied to the reference to self.
-    pub fn search<'b>(&'b self, search: &Search) -> Vec<&'b str> {
+    pub fn search(&self, search: &Search) -> Vec<u32> {
         // contains all the buckets
         let mut res: Vec<RoaringBitmap> = Vec::new();
         let mut candidates = self.get_candidates(&search);
@@ -222,11 +219,7 @@ impl<'a> Index<'a> {
         }
 
         res.iter()
-            .flat_map(|bitmap| {
-                bitmap
-                    .iter()
-                    .map(|idx| self.documents[idx as usize].as_ref())
-            })
+            .flat_map(|bitmap| bitmap.iter())
             .take(search.limit)
             .collect()
     }
