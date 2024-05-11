@@ -3,6 +3,8 @@ use egui::ScrollArea;
 pub struct TemplateApp {
     index: zearch::Index<'static>,
     query: String,
+    processing_time: std::time::Duration,
+    limit: usize,
 }
 
 impl Default for TemplateApp {
@@ -11,6 +13,8 @@ impl Default for TemplateApp {
         Self {
             index: zearch::Index::from_bytes(database).unwrap(),
             query: String::new(),
+            processing_time: std::time::Duration::from_secs(0),
+            limit: 10,
         }
     }
 }
@@ -26,18 +30,31 @@ impl eframe::App for TemplateApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Zearch + wasm demo");
 
+            let mut changed = false;
             ui.horizontal(|ui| {
                 ui.label("Write a french city name: ");
-                ui.text_edit_singleline(&mut self.query);
+                changed |= ui.text_edit_singleline(&mut self.query).changed();
             });
+
+            ui.label(format!(
+                "Processed the search in {:?}",
+                self.processing_time
+            ));
+            changed |= ui
+                .add(egui::Slider::new(&mut self.limit, 1..=50).text("limit"))
+                .changed();
 
             ui.separator();
 
             let now = std::time::Instant::now();
+            let mut search = zearch::Search::new(&self.query);
+            let results = self.index.search(search.with_limit(self.limit));
 
-            let search = zearch::Search::new(&self.query);
-            let results = self.index.search(&search);
-            ui.label(format!("Processed the search in {:?}", now.elapsed()));
+            // Ideally we shouldn't run the search for every frame
+            // but I have other stuff to do before optimizing that
+            if changed {
+                self.processing_time = now.elapsed();
+            }
 
             ScrollArea::vertical().show(ui, |ui| {
                 for result in results {
