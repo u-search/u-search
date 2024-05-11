@@ -23,8 +23,6 @@ impl<'a> Index<'a> {
         documents: &[impl AsRef<str>],
         writer: &mut impl std::io::Write,
     ) -> std::io::Result<()> {
-        println!("Extracting and normalizing the words...");
-        let now = std::time::Instant::now();
         let mut words = documents
             .iter()
             .enumerate()
@@ -35,15 +33,7 @@ impl<'a> Index<'a> {
                     .map(move |word| (id as Id, normalize(word)))
             })
             .collect::<Vec<(Id, String)>>();
-        println!("Took {:?}", now.elapsed());
-
-        println!("Sorting the words...");
-        let now = std::time::Instant::now();
         words.sort_unstable_by(|(_, left), (_, right)| left.cmp(right));
-        println!("Took {:?}", now.elapsed());
-
-        println!("Building the reverse indexes and the fst...");
-        let now = std::time::Instant::now();
 
         let mut build = MapBuilder::memory();
 
@@ -60,30 +50,19 @@ impl<'a> Index<'a> {
 
             last_word = Some(word);
         }
-        println!("Took {:?}", now.elapsed());
-
-        println!("Writing the documents...");
-        let now = std::time::Instant::now();
         writer.write_all(documents.len().to_be_bytes().as_slice())?;
         for document in documents {
             Self::write_slice(writer, document.as_ref().as_bytes())?;
         }
-        println!("Took {:?}", now.elapsed());
 
-        println!("Writing the bitmaps...");
-        let now = std::time::Instant::now();
         writer.write_all(bitmaps.len().to_be_bytes().as_slice())?;
         for bitmap in bitmaps {
             bitmap.serialize_into(&mut *writer)?;
         }
-        println!("Took {:?}", now.elapsed());
 
-        println!("Writing the fst...");
-        let now = std::time::Instant::now();
         // cannot fail since we were writing in memory
         let fst = build.into_inner().unwrap();
         Self::write_slice(writer, &fst)?;
-        println!("Took {:?}", now.elapsed());
 
         Ok(())
     }
@@ -95,7 +74,8 @@ impl<'a> Index<'a> {
     }
 
     fn read_size_from_bytes(bytes: &mut &[u8]) -> Option<usize> {
-        let (size, b) = bytes.split_first_chunk::<8>()?;
+        const USIZESIZE: usize = std::mem::size_of::<usize>();
+        let (size, b) = bytes.split_first_chunk::<USIZESIZE>()?;
         *bytes = b;
         Some(usize::from_be_bytes(*size))
     }
@@ -113,33 +93,24 @@ impl<'a> Index<'a> {
 
     pub fn from_bytes(mut bytes: &'a [u8]) -> Option<Self> {
         // 1. Read the documents
-        println!("Reading the documents...");
-        let now = std::time::Instant::now();
         let mut documents = Vec::new();
         let nb_documents = Self::read_size_from_bytes(&mut bytes)?;
         for _ in 0..nb_documents {
             let document = Self::read_slice_from_bytes(&mut bytes)?;
             documents.push(Cow::Borrowed(std::str::from_utf8(document).ok()?));
         }
-        println!("Took {:?}", now.elapsed());
 
         // 2. Read the bitmap
-        println!("Reading the bitmaps...");
-        let now = std::time::Instant::now();
         let nb_bitmaps = Self::read_size_from_bytes(&mut bytes)?;
         let mut bitmaps = Vec::new();
         for _ in 0..nb_bitmaps {
             let bitmap = RoaringBitmap::deserialize_from(&mut bytes).unwrap();
             bitmaps.push(bitmap);
         }
-        println!("Took {:?}", now.elapsed());
 
         // 3. Read the fst
-        println!("Reading the fst...");
-        let now = std::time::Instant::now();
         let fst = Self::read_slice_from_bytes(&mut bytes)?;
         let fst = Map::new(Cow::Borrowed(fst)).ok()?;
-        println!("Took {:?}", now.elapsed());
 
         Some(Self {
             documents,

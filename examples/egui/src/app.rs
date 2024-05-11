@@ -3,6 +3,7 @@ use egui::ScrollArea;
 pub struct TemplateApp {
     index: zearch::Index<'static>,
     query: String,
+    #[cfg(not(target_arch = "wasm32"))]
     processing_time: std::time::Duration,
     limit: usize,
 }
@@ -13,6 +14,7 @@ impl Default for TemplateApp {
         Self {
             index: zearch::Index::from_bytes(database).unwrap(),
             query: String::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             processing_time: std::time::Duration::from_secs(0),
             limit: 10,
         }
@@ -36,6 +38,7 @@ impl eframe::App for TemplateApp {
                 changed |= ui.text_edit_singleline(&mut self.query).changed();
             });
 
+            #[cfg(not(target_arch = "wasm32"))]
             ui.label(format!(
                 "Processed the search in {:?}",
                 self.processing_time
@@ -46,12 +49,14 @@ impl eframe::App for TemplateApp {
 
             ui.separator();
 
+            #[cfg(not(target_arch = "wasm32"))]
             let now = std::time::Instant::now();
             let mut search = zearch::Search::new(&self.query);
             let results = self.index.search(search.with_limit(self.limit));
 
             // Ideally we shouldn't run the search for every frame
             // but I have other stuff to do before optimizing that
+            #[cfg(not(target_arch = "wasm32"))]
             if changed {
                 self.processing_time = now.elapsed();
             }
