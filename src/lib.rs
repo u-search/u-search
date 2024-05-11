@@ -359,12 +359,19 @@ pub struct Search<'a> {
 }
 
 impl<'a> Search<'a> {
+    /// Create a new search requests from an input
     pub fn new(input: &'a str) -> Self {
         Self {
             input,
             limit: 10,
             ranking_rules: vec![RankingRule::Word, RankingRule::Typo, RankingRule::Exact],
         }
+    }
+
+    /// Customize the number of results you want to get back
+    pub fn with_limit(&mut self, limit: usize) -> &mut Self {
+        self.limit = limit;
+        self
     }
 }
 
@@ -384,8 +391,6 @@ fn normalize(s: &str) -> String {
 
 #[cfg(test)]
 mod test {
-    use core::slice::SlicePattern;
-
     use super::*;
 
     fn create_small_index() -> Index<'static> {

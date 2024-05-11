@@ -61,7 +61,11 @@ impl RankingRuleImpl for Exact {
                             original, index, ..
                         }) if *index == id => {
                             distance += DamerauLevenshtein {
-                                src: original[0..word.len().min(original.len())].to_string(),
+                                // Since we're merging two string it's possible that the smallest one falls in the middle of a character of the second one
+                                src: String::from_utf8_lossy(
+                                    &original.as_bytes()[0..word.len().min(original.len())],
+                                )
+                                .into_owned(),
                                 tar: word.to_string(),
                                 restricted: true,
                             }
