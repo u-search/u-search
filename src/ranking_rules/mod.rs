@@ -17,6 +17,7 @@ pub enum RankingRule {
 
 pub trait RankingRuleImpl {
     /// For debugging/logging purposes
+    #[allow(unused)]
     fn name(&self) -> &'static str;
 
     /// 1. Do your shit with the words candidates
