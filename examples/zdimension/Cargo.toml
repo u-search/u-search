@@ -1,0 +1,8 @@
+[package]
+name = "zdimension"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+zearch = { path = "../.." }
+speedy = "0.8.7"

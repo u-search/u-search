@@ -19,7 +19,10 @@ pub struct Index<'a> {
 type Id = u32;
 
 impl<'a> Index<'a> {
-    pub fn construct(documents: &[&str], writer: &mut impl std::io::Write) -> std::io::Result<()> {
+    pub fn construct(
+        documents: &[impl AsRef<str>],
+        writer: &mut impl std::io::Write,
+    ) -> std::io::Result<()> {
         println!("Extracting and normalizing the words...");
         let now = std::time::Instant::now();
         let mut words = documents
@@ -27,6 +30,7 @@ impl<'a> Index<'a> {
             .enumerate()
             .flat_map(|(id, document)| {
                 document
+                    .as_ref()
                     .split_whitespace()
                     .map(move |word| (id as Id, normalize(word)))
             })
@@ -62,7 +66,7 @@ impl<'a> Index<'a> {
         let now = std::time::Instant::now();
         writer.write_all(documents.len().to_be_bytes().as_slice())?;
         for document in documents {
-            Self::write_slice(writer, document.as_bytes())?;
+            Self::write_slice(writer, document.as_ref().as_bytes())?;
         }
         println!("Took {:?}", now.elapsed());
 
