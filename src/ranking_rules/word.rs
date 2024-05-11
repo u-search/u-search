@@ -74,12 +74,14 @@ mod test {
             // "le" should be present in a tons of documents and will be first to be evicted
             WordCandidate {
                 original: String::from("le"),
+                normalized: String::from("le"),
                 index: 0,
                 typos: vec![RoaringBitmap::from_sorted_iter(0..1000).unwrap()],
             },
             // "beau" is present in a bunch of documents but only 4 overlaps with "le"
             WordCandidate {
                 original: String::from("beau"),
+                normalized: String::from("beau"),
                 index: 1,
                 // where I shove my stuff must not matter
                 typos: vec![
@@ -90,6 +92,7 @@ mod test {
             },
             WordCandidate {
                 original: String::from("chien"),
+                normalized: String::from("chien"),
                 index: 2,
                 typos: vec![RoaringBitmap::from_sorted_iter(
                     (1..3).chain(98..101).chain(1028..1030),

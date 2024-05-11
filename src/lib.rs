@@ -54,15 +54,14 @@ impl Index {
     }
 
     pub fn search<'a>(&'a self, search: &Search) -> Vec<&'a str> {
-        // TODO: returns random results maybe?
-        if search.words.len() == 0 {
-            return Vec::new();
-        }
-
         // contains all the buckets
         let mut res: Vec<RoaringBitmap> = Vec::new();
-
         let mut candidates = self.get_candidates(&search);
+
+        // TODO: returns random results maybe?
+        if candidates.len() == 0 {
+            return Vec::new();
+        }
 
         let mut ranking_rules: Vec<Box<dyn RankingRuleImpl>> = search
             .ranking_rules
@@ -150,17 +149,24 @@ impl Index {
     }
 
     fn get_candidates(&self, search: &Search) -> Vec<WordCandidate> {
-        let mut ret = Vec::with_capacity(search.words.len());
+        let words: Vec<_> = search
+            .input
+            .split_whitespace()
+            .map(|word| (word, normalize(word)))
+            .filter(|(_word, normalized)| !normalized.is_empty())
+            .collect();
+        let mut ret = Vec::with_capacity(words.len());
 
-        for (index, word) in search.words.iter().enumerate() {
-            let mut candidates = WordCandidate::new(word.to_string(), index);
+        for (index, (word, normalized)) in words.iter().enumerate() {
+            let mut candidates =
+                WordCandidate::new(word.to_string(), normalized.to_string(), index);
 
             // enable 1 typo every 3 letters maxed at 3 typos
-            let typo = (word.len() / 3).min(3);
-            let lev = fst::automaton::Levenshtein::new(word, typo as u32).unwrap();
+            let typo = (normalized.len() / 3).min(3);
+            let lev = fst::automaton::Levenshtein::new(normalized, typo as u32).unwrap();
 
             // if we're at the last word we should also run a prefix search
-            if index == search.words.len() - 1 {
+            if index == words.len() - 1 {
                 let mut stream = self.fst.search(lev.starts_with()).into_stream();
                 while let Some((matched, id)) = stream.next() {
                     candidates.insert_with_maybe_typo(
@@ -181,14 +187,6 @@ impl Index {
             ret.push(candidates);
         }
 
-        // TODO add one extra fake word for the prefix search
-        /*
-        let mut stream = self.fst.search(lev.starts_with()).into_stream();
-        while let Some((_matched, id)) = stream.next() {
-            bitmap |= &self.bitmaps[id as usize];
-        }
-        */
-
         ret
     }
 }
@@ -197,6 +195,8 @@ impl Index {
 pub(crate) struct WordCandidate {
     // the original string
     original: String,
+    // normalized string
+    normalized: String,
     // its index in the phrase
     index: usize,
     // the number of documuents its contained in
@@ -204,9 +204,10 @@ pub(crate) struct WordCandidate {
 }
 
 impl WordCandidate {
-    pub fn new(original: String, index: usize) -> Self {
+    pub fn new(original: String, normalized: String, index: usize) -> Self {
         Self {
             original,
+            normalized,
             index,
             // we have a maximum of 3 typos
             typos: vec![RoaringBitmap::new(); 4],
@@ -218,9 +219,9 @@ impl WordCandidate {
     pub fn insert_with_maybe_typo(&mut self, other: &str, bitmap: &RoaringBitmap) {
         // TODO: why is this crate taking ownership of my value to do a read only operation :(
         let distance = DamerauLevenshtein {
-            src: self.original.clone(),
+            src: self.normalized.clone(),
             // if we did a prefix query we shouldn't count the extra letters as typo
-            tar: other[0..other.len().min(self.original.len())].to_string(),
+            tar: other[0..other.len().min(self.normalized.len())].to_string(),
             restricted: true,
         }
         .distance();
@@ -234,22 +235,14 @@ impl WordCandidate {
 pub struct Search<'a> {
     input: &'a str,
     limit: usize,
-    words: Vec<String>,
     ranking_rules: Vec<RankingRule>,
 }
 
 impl<'a> Search<'a> {
     pub fn new(input: &'a str) -> Self {
-        let words: Vec<_> = input
-            .split_whitespace()
-            .map(|word| normalize(word))
-            .filter(|word| !word.is_empty())
-            .collect();
-
         Self {
             input,
             limit: 10,
-            words,
             ranking_rules: vec![RankingRule::Word, RankingRule::Typo, RankingRule::Exact],
         }
     }
