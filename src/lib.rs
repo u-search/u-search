@@ -141,6 +141,10 @@ impl<'a> Index<'a> {
         Some(index.move_in_memory())
     }
 
+    pub fn get_document(&self, id: u32) -> Option<&str> {
+        self.documents.get(id as usize).map(|s| s.as_ref())
+    }
+
     pub fn search(&self, search: &Search) -> Vec<u32> {
         // contains all the buckets
         let mut res: Vec<RoaringBitmap> = Vec::new();
