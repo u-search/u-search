@@ -1,6 +1,6 @@
 mod ranking_rules;
 
-use std::ops::ControlFlow;
+use std::{borrow::Cow, ops::ControlFlow};
 
 use fst::{Automaton, IntoStreamer, Map, MapBuilder, Streamer};
 use ranking_rules::{typo::Typo, word::Word, RankingRule, RankingRuleImpl};
@@ -9,26 +9,41 @@ use text_distance::DamerauLevenshtein;
 
 use crate::ranking_rules::exact::Exact;
 
-pub struct Index {
-    documents: Vec<String>,
-    fst: Map<Vec<u8>>,
+pub struct Index<'a> {
+    documents: Vec<Cow<'a, str>>,
+    // we cannot work on serialized bitmap yet thus we're going to load everything in RAM
     bitmaps: Vec<RoaringBitmap>,
+    fst: Map<Cow<'a, [u8]>>,
 }
 
 type Id = u32;
 
-impl Index {
-    pub fn construct(documents: Vec<String>) -> Self {
+impl<'a> Index<'a> {
+    pub fn construct(
+        documents: &[impl AsRef<str>],
+        writer: &mut impl std::io::Write,
+    ) -> std::io::Result<()> {
+        println!("Extracting and normalizing the words...");
+        let now = std::time::Instant::now();
         let mut words = documents
             .iter()
             .enumerate()
             .flat_map(|(id, document)| {
                 document
+                    .as_ref()
                     .split_whitespace()
                     .map(move |word| (id as Id, normalize(word)))
             })
             .collect::<Vec<(Id, String)>>();
+        println!("Took {:?}", now.elapsed());
+
+        println!("Sorting the words...");
+        let now = std::time::Instant::now();
         words.sort_unstable_by(|(_, left), (_, right)| left.cmp(right));
+        println!("Took {:?}", now.elapsed());
+
+        println!("Building the reverse indexes and the fst...");
+        let now = std::time::Instant::now();
 
         let mut build = MapBuilder::memory();
 
@@ -45,15 +60,120 @@ impl Index {
 
             last_word = Some(word);
         }
+        println!("Took {:?}", now.elapsed());
 
-        Index {
+        println!("Writing the documents...");
+        let now = std::time::Instant::now();
+        writer.write_all(documents.len().to_be_bytes().as_slice())?;
+        for document in documents {
+            Self::write_slice(writer, document.as_ref().as_bytes())?;
+        }
+        println!("Took {:?}", now.elapsed());
+
+        println!("Writing the bitmaps...");
+        let now = std::time::Instant::now();
+        writer.write_all(bitmaps.len().to_be_bytes().as_slice())?;
+        for bitmap in bitmaps {
+            bitmap.serialize_into(&mut *writer)?;
+        }
+        println!("Took {:?}", now.elapsed());
+
+        println!("Writing the fst...");
+        let now = std::time::Instant::now();
+        // cannot fail since we were writing in memory
+        let fst = build.into_inner().unwrap();
+        Self::write_slice(writer, &fst)?;
+        println!("Took {:?}", now.elapsed());
+
+        Ok(())
+    }
+
+    fn write_slice(writer: &mut impl std::io::Write, slice: &[u8]) -> std::io::Result<()> {
+        writer.write_all(slice.len().to_be_bytes().as_slice())?;
+        writer.write_all(slice)?;
+        Ok(())
+    }
+
+    fn read_size_from_bytes(bytes: &mut &[u8]) -> Option<usize> {
+        let (size, b) = bytes.split_first_chunk::<8>()?;
+        *bytes = b;
+        Some(usize::from_be_bytes(*size))
+    }
+
+    fn read_slice_from_bytes<'b>(bytes: &mut &'b [u8]) -> Option<&'b [u8]> {
+        let size = Self::read_size_from_bytes(bytes)?;
+        if bytes.len() < size {
+            return None;
+        }
+        let ret = &bytes[..size];
+        *bytes = &bytes[size..];
+
+        Some(ret)
+    }
+
+    pub fn from_bytes(mut bytes: &'a [u8]) -> Option<Self> {
+        // 1. Read the documents
+        println!("Reading the documents...");
+        let now = std::time::Instant::now();
+        let mut documents = Vec::new();
+        let nb_documents = Self::read_size_from_bytes(&mut bytes)?;
+        for _ in 0..nb_documents {
+            let document = Self::read_slice_from_bytes(&mut bytes)?;
+            documents.push(Cow::Borrowed(std::str::from_utf8(document).ok()?));
+        }
+        println!("Took {:?}", now.elapsed());
+
+        // 2. Read the bitmap
+        println!("Reading the bitmaps...");
+        let now = std::time::Instant::now();
+        let nb_bitmaps = Self::read_size_from_bytes(&mut bytes)?;
+        let mut bitmaps = Vec::new();
+        for _ in 0..nb_bitmaps {
+            let bitmap = RoaringBitmap::deserialize_from(&mut bytes).unwrap();
+            bitmaps.push(bitmap);
+        }
+        println!("Took {:?}", now.elapsed());
+
+        // 3. Read the fst
+        println!("Reading the fst...");
+        let now = std::time::Instant::now();
+        let fst = Self::read_slice_from_bytes(&mut bytes)?;
+        let fst = Map::new(Cow::Borrowed(fst)).ok()?;
+        println!("Took {:?}", now.elapsed());
+
+        Some(Self {
             documents,
-            fst: build.into_map(),
             bitmaps,
+            fst,
+        })
+    }
+
+    pub fn move_in_memory(self) -> Index<'static> {
+        Index {
+            documents: self
+                .documents
+                .into_iter()
+                .map(|document| Cow::Owned(document.into_owned()))
+                .collect(),
+            bitmaps: self.bitmaps,
+            fst: self
+                .fst
+                .map_data(|data| Cow::Owned(data.into_owned()))
+                .unwrap(),
         }
     }
 
-    pub fn search<'a>(&'a self, search: &Search) -> Vec<&'a str> {
+    pub fn new_in_memory(documents: &[&str]) -> Option<Index<'static>> {
+        let mut index = Vec::new();
+        Self::construct(documents, &mut index).ok()?;
+        let index = Index::from_bytes(&index)?;
+        Some(index.move_in_memory())
+    }
+
+    // the lifetime is not tied to 'a here, if 'a was made static by shoving
+    // the Self on ram the ref would expire when the struct is dropped.
+    // Here the lifetime is tied to the reference to self.
+    pub fn search<'b>(&'b self, search: &Search) -> Vec<&'b str> {
         // contains all the buckets
         let mut res: Vec<RoaringBitmap> = Vec::new();
         let mut candidates = self.get_candidates(&search);
@@ -264,9 +384,11 @@ fn normalize(s: &str) -> String {
 
 #[cfg(test)]
 mod test {
+    use core::slice::SlicePattern;
+
     use super::*;
 
-    fn create_small_index() -> Index {
+    fn create_small_index() -> Index<'static> {
         let names = [
             "Tamo le plus beau",
             "kefir le bon petit chien",
@@ -281,7 +403,7 @@ mod test {
             "le double kef",
             "les keftas c'est bon aussi",
         ];
-        Index::construct(names.into_iter().map(|s| s.to_string()).collect())
+        Index::new_in_memory(names.as_slice()).unwrap()
     }
 
     #[test]

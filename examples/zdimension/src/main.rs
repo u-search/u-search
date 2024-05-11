@@ -14,10 +14,16 @@ fn main() {
     let names = Names::read_from_file("names_for_tamo.bin").unwrap();
     println!("Done in {:?}", now.elapsed());
 
+    let mut index = Vec::new();
     println!("Constructing the index...");
     let now = std::time::Instant::now();
-    let index = Index::construct(names.names);
+    Index::construct(
+        &names.names.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        &mut index,
+    )
+    .unwrap();
     println!("Done in {:?}", now.elapsed());
+    let index = Index::from_bytes(&index).unwrap();
 
     loop {
         println!();
