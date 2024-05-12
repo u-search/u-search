@@ -6,7 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fst = { version = "0.4.7", features = ["levenshtein"] }
+fst = "0.4.7"
+levenshtein_automata = { version = "0.2.1", features = ["fst_automaton"] }
 roaring = "0.10.4"
 text_distance = "0.5.0"
 thiserror = "1.0.60"

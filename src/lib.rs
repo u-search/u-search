@@ -1,8 +1,9 @@
 mod ranking_rules;
 
-use std::{borrow::Cow, ops::ControlFlow};
+use std::{borrow::Cow, ops::ControlFlow, sync::OnceLock};
 
-use fst::{Automaton, IntoStreamer, Map, MapBuilder, Streamer};
+use fst::{IntoStreamer, Map, MapBuilder, Streamer};
+use levenshtein_automata::LevenshteinAutomatonBuilder;
 use ranking_rules::{typo::Typo, word::Word, RankingRule, RankingRuleImpl};
 use roaring::RoaringBitmap;
 use text_distance::DamerauLevenshtein;
@@ -237,6 +238,11 @@ impl<'a> Index<'a> {
     }
 
     fn get_candidates(&self, search: &Search) -> Vec<WordCandidate> {
+        static LEVENSHTEINS: OnceLock<[LevenshteinAutomatonBuilder; 4]> = OnceLock::new();
+        let levenshtein = LEVENSHTEINS.get_or_init(|| {
+            core::array::from_fn(|nb_typo| LevenshteinAutomatonBuilder::new(nb_typo as u8, true))
+        });
+
         let words: Vec<_> = search
             .input
             .split_whitespace()
@@ -251,11 +257,12 @@ impl<'a> Index<'a> {
 
             // enable 1 typo every 3 letters maxed at 3 typos
             let typo = (normalized.len() / 3).min(3);
-            let lev = fst::automaton::Levenshtein::new(normalized, typo as u32).unwrap();
+            let lev = &levenshtein[typo];
 
             // if we're at the last word we should also run a prefix search
             if index == words.len() - 1 {
-                let mut stream = self.fst.search(lev.starts_with()).into_stream();
+                let lev = lev.build_prefix_dfa(&normalized);
+                let mut stream = self.fst.search(lev).into_stream();
                 while let Some((matched, id)) = stream.next() {
                     candidates.insert_with_maybe_typo(
                         std::str::from_utf8(matched).unwrap(),
@@ -263,6 +270,7 @@ impl<'a> Index<'a> {
                     );
                 }
             } else {
+                let lev = lev.build_dfa(&normalized);
                 let mut stream = self.fst.search(lev).into_stream();
                 while let Some((matched, id)) = stream.next() {
                     candidates.insert_with_maybe_typo(
