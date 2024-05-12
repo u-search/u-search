@@ -42,8 +42,8 @@ fn main() {
         let ret = index.search(&Search::new(&input));
 
         println!("Found (in {:?}):", now.elapsed());
-        for name in ret {
-            println!("{name}");
+        for id in ret {
+            println!("{}", index.get_document(id).unwrap());
         }
     }
 }
