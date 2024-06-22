@@ -54,7 +54,7 @@ impl RankingRuleImpl for Typo {
         }
     }
 
-    fn current_results(&self, words: &Vec<WordCandidate>) -> RoaringBitmap {
+    fn current_results(&self, words: &[WordCandidate]) -> RoaringBitmap {
         words
             .iter()
             .map(|word| word.typos.iter().take(self.typo_allowed).union())

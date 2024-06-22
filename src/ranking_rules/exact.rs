@@ -78,7 +78,7 @@ impl RankingRuleImpl for Exact {
                 }
 
                 let idx = distance.min(3);
-                self.buckets[idx].insert(id as u32);
+                self.buckets[idx].insert(id);
             }
             self.buckets.retain(|bucket| !bucket.is_empty());
             self.buckets.reverse();
@@ -91,7 +91,7 @@ impl RankingRuleImpl for Exact {
         }
     }
 
-    fn current_results(&self, _words: &Vec<WordCandidate>) -> RoaringBitmap {
+    fn current_results(&self, _words: &[WordCandidate]) -> RoaringBitmap {
         self.buckets.first().cloned().unwrap_or_default()
     }
 

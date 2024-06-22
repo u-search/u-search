@@ -11,7 +11,7 @@ pub struct Word {
 }
 
 impl Word {
-    pub fn new(words: &mut Vec<WordCandidate>) -> Self {
+    pub fn new(words: &mut [WordCandidate]) -> Self {
         // Since the default strategy is to pop the words from
         // the biggest frequency to the lowest we're going to
         // sort all the words by frequency in advance.
@@ -51,7 +51,7 @@ impl RankingRuleImpl for Word {
         }
     }
 
-    fn current_results(&self, words: &Vec<WordCandidate>) -> RoaringBitmap {
+    fn current_results(&self, words: &[WordCandidate]) -> RoaringBitmap {
         words
             .iter()
             .map(|word| word.typos.as_slice().union())

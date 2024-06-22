@@ -33,10 +33,8 @@ pub trait RankingRuleImpl {
 
     /// Can be called if you returned a `Continue` right before, but there is no ranking rules after you
     /// so we're simply going to insert your results in the bucket sort and call you again.
-    fn current_results(&self, words: &Vec<WordCandidate>) -> RoaringBitmap;
+    fn current_results(&self, words: &[WordCandidate]) -> RoaringBitmap;
 
     /// If your ranking rule uses any kind of caches then it should remove the `used` elements from it.
-    fn cleanup(&mut self, _used: &RoaringBitmap) {
-        ()
-    }
+    fn cleanup(&mut self, _used: &RoaringBitmap) {}
 }

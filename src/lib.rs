@@ -149,10 +149,10 @@ impl<'a> Index<'a> {
     pub fn search(&self, search: &Search) -> Vec<u32> {
         // contains all the buckets
         let mut res: Vec<RoaringBitmap> = Vec::new();
-        let mut candidates = self.get_candidates(&search);
+        let mut candidates = self.get_candidates(search);
 
         // TODO: returns random results maybe?
-        if candidates.len() == 0 {
+        if candidates.is_empty() {
             return Vec::new();
         }
 
@@ -261,7 +261,7 @@ impl<'a> Index<'a> {
 
             // if we're at the last word we should also run a prefix search
             if index == words.len() - 1 {
-                let lev = lev.build_prefix_dfa(&normalized);
+                let lev = lev.build_prefix_dfa(normalized);
                 let mut stream = self.fst.search(lev).into_stream();
                 while let Some((matched, id)) = stream.next() {
                     candidates.insert_with_maybe_typo(
@@ -270,7 +270,7 @@ impl<'a> Index<'a> {
                     );
                 }
             } else {
-                let lev = lev.build_dfa(&normalized);
+                let lev = lev.build_dfa(normalized);
                 let mut stream = self.fst.search(lev).into_stream();
                 while let Some((matched, id)) = stream.next() {
                     candidates.insert_with_maybe_typo(
