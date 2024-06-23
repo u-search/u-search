@@ -63,6 +63,7 @@ impl eframe::App for TemplateApp {
 
             ScrollArea::vertical().show(ui, |ui| {
                 for result in results {
+                    let result = self.index.get_document(result).unwrap();
                     ui.label(result);
                 }
             });
